@@ -31,8 +31,6 @@ DisplayManager ui;
 NetworkManager net(WIFI_SSID, WIFI_PASS, MQTT_BROKER_IP, MQTT_USER, MQTT_PASS);
 
 unsigned long tUpdate = 0;
-unsigned long tScreenCycle = 0;
-bool showingDashboard = true;
 
 void setup() {
     Serial.begin(115200);
@@ -46,36 +44,23 @@ void setup() {
     net.begin();
     
     ui.showSplash();
-    ui.drawDashboardFrame();
 }
 
 void loop() {
     net.loop();
 
-    // 1. Alternancia automática de la interfaz HMI (cada 8 segundos)
-    if (millis() - tScreenCycle > 8000) {
-        showingDashboard = !showingDashboard;
-        if (showingDashboard) ui.drawDashboardFrame();
-        else ui.drawNetworkFrame();
-        tScreenCycle = millis();
-    }
-
-    // 2. Edge Computing: Adquisición de Smart Data
+    // 1. Edge Computing: Adquisición de Smart Data
     float temp = sensors.getT();
     float hum = sensors.getH();
     int soil_percent = sensors.getSoil(); // Ya viene con Filtro de Promedio Móvil
     
-    // 3. Lógica de Control (Histéresis básica y actuación)
+    // 2. Lógica de Control (Histéresis básica y actuación)
     bool valveStatus = (soil_percent < UMBRAL_MARCHITEZ);
     digitalWrite(PIN_RELAY, valveStatus ? HIGH : LOW);
 
-    // 4. Actualización de Interfaz y Telemetría
+    // 3. Actualización de Interfaz HMI Unificada (Dashboard Industrial Sin Parpadeo)
     if(millis() - tUpdate > 1000) {
-        if (showingDashboard) {
-            ui.updateData(temp, hum, soil_percent, valveStatus);
-        } else {
-            ui.updateNetworkStatus(net.isWifiOk(), net.isMqttOk(), net.getWifiIp(), net.getWifiRssi());
-        }
+        ui.updateDashboard(temp, hum, soil_percent, valveStatus, net.isWifiOk(), net.isMqttOk(), net.getWifiIp(), net.getWifiRssi());
         
         static int sendCount = 0;
         if(++sendCount >= 5) { // Publicar en MQTT cada 5 segundos
