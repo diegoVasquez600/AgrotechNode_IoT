@@ -23,60 +23,39 @@
 #define TFT_MOSI 23
 #define TFT_SCLK 18
 
+// Paleta de Colores Industriales (Formato RGB565)
+#define COLOR_BG      0x0825 // Fondo muy oscuro azul/gris
+#define COLOR_PANEL   0x18E7 // Fondo de las cajas de datos
+#define COLOR_HEADER  0x02F3 // Azul técnico profundo
+#define COLOR_TEXT    0xFFFF // Blanco
+#define COLOR_ACCENT  0x07E0 // Verde Lima (Estabilidad/OK)
+#define COLOR_WARN    0xF800 // Rojo (Alerta)
+#define COLOR_DATA    0x07FF // Cyan (Datos neutros)
+
 class DisplayManager {
 private:
     Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
-    bool lastWifiOk = false;
-    bool lastMqttOk = false;
-    bool headerStatusInit = false;
-    bool dashboardCacheInit = false;
-    bool networkCacheInit = false;
-
-    float lastTemp = NAN;
-    float lastHum = NAN;
+    
+    // Variables para caché (Evita redibujar y parpadear)
+    float lastTemp = -999;
+    float lastHum = -999;
     int lastSoil = -1;
-    bool lastRelay = false;
-
-    String lastSsid = "";
+    int lastRelay = -1;
+    
+    int lastWifi = -1;
+    int lastMqtt = -1;
     String lastIp = "";
     int lastRssi = -999;
-    String lastQuality = "";
-    String lastMqttHost = "";
-    String lastMqttState = "";
-    bool lastMqttStateOk = false;
 
-    void invalidateDynamicCache() {
-        dashboardCacheInit = false;
-        networkCacheInit = false;
-        lastTemp = NAN;
-        lastHum = NAN;
-        lastSoil = -1;
-        lastRelay = false;
-    }
-
-    void drawWifiIcon(int x, int y, bool ok) {
-        uint16_t color = ok ? ILI9341_GREEN : ILI9341_RED;
-        tft.drawCircle(x, y, 3, color);
-        tft.drawCircle(x, y, 7, color);
-        tft.fillCircle(x, y, 2, color);
-    }
-
-    void drawHeader(const char* title, bool wifiOk, bool mqttOk) {
-        tft.fillRect(0, 0, 320, 40, ILI9341_BLUE);
-        tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
-        tft.setTextSize(2);
-        tft.setCursor(10, 12);
-        tft.print(title);
-        drawWifiIcon(245, 19, wifiOk);
-        headerStatusInit = true;
-    }
-
-    void drawFooterHint(const char* text) {
-        tft.fillRect(0, 218, 320, 22, ILI9341_BLACK);
-        tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
+    void drawPanel(int x, int y, int w, int h, const char* title) {
+        tft.drawRoundRect(x, y, w, h, 5, 0x5AEB); 
+        tft.fillRoundRect(x+1, y+1, w-2, h-2, 5, COLOR_PANEL); 
+        tft.fillRect(x+1, y+1, w-2, 22, COLOR_HEADER); 
+        tft.drawFastHLine(x+1, y+23, w-2, 0x5AEB); 
+        tft.setTextColor(COLOR_TEXT);
         tft.setTextSize(1);
-        tft.setCursor(8, 225);
-        tft.print(text);
+        tft.setCursor(x + 8, y + 8);
+        tft.print(title);
     }
 
 public:
@@ -84,92 +63,103 @@ public:
 
     void begin() {
         tft.begin();
-        tft.setRotation(1); // Apaisado
-        tft.fillScreen(ILI9341_BLACK);
-        invalidateDynamicCache();
+        tft.setRotation(3); // Orientación horizontal
+        tft.fillScreen(COLOR_BG);
     }
 
     void showSplash() {
-        tft.fillScreen(ILI9341_BLACK);
-        tft.drawRect(5, 5, 310, 230, ILI9341_GREEN);
-        tft.setTextColor(ILI9341_WHITE);
+        tft.fillScreen(COLOR_BG);
+        tft.drawRect(10, 10, 300, 220, COLOR_ACCENT);
+        tft.setTextColor(COLOR_TEXT);
         tft.setTextSize(3);
-        tft.setCursor(20, 80);
-        tft.println("AgroTech Node PoC");
+        tft.setCursor(35, 90);
+        tft.println("AgroTech_Node");
+        tft.setTextSize(1);
+        tft.setCursor(85, 140);
+        tft.setTextColor(COLOR_DATA);
+        tft.println("SISTEMA DE RESILIENCIA HIDRICA");
+        delay(2500);
+        
+        tft.fillScreen(COLOR_BG);
+        drawStaticUI();
+    }
+
+    void drawStaticUI() {
+        tft.fillRect(0, 0, 320, 25, COLOR_HEADER);
+        tft.setTextColor(COLOR_TEXT);
         tft.setTextSize(2);
-        tft.setCursor(80, 140);
-        tft.println("INITIALIZING...");
-        delay(3000);
+        tft.setCursor(10, 5);
+        tft.print("AGROTECH_NODE PoC");
+
+        drawPanel(5, 32, 150, 95, "MICROCLIMA");
+        drawPanel(160, 32, 155, 95, "SUSTRATO & CTRL");
+        drawPanel(5, 132, 310, 100, "TELEMETRIA DE RED");
     }
 
-    void drawDashboardFrame() {
-        tft.fillScreen(ILI9341_BLACK);
-        drawHeader("AGROTECH NODO 1", lastWifiOk, lastMqttOk);
-        tft.drawRoundRect(8, 48, 304, 164, 8, ILI9341_WHITE);
-        drawFooterHint("MODO: MONITOREO CONTINUO");
-        dashboardCacheInit = false;
-    }
-
-    void drawNetworkFrame() {
-        tft.fillScreen(ILI9341_BLACK);
-        drawHeader("ESTADO DE RED", lastWifiOk, lastMqttOk);
-        tft.drawRoundRect(8, 48, 304, 164, 8, ILI9341_CYAN);
-        drawFooterHint("MODO: DIAGNOSTICO DE ENLACE");
-        networkCacheInit = false;
-    }
-
-    void updateData(float temp, float hum, int soil, bool relay) {
+    void updateDashboard(float temp, float hum, int soil, bool relay, bool wifiOk, bool mqttOk, String ip, int rssi) {
         tft.setTextSize(2);
-        if (!dashboardCacheInit || fabsf(temp - lastTemp) >= 0.2f) {
-            tft.fillRect(16, 78, 286, 24, ILI9341_BLACK);
-            tft.setCursor(16, 78);
-            tft.setTextColor(ILI9341_CYAN, ILI9341_BLACK);
-            tft.printf("Temp:  %.1f C", temp);
+        if (temp != lastTemp || isnan(lastTemp)) {
+            tft.setTextColor(COLOR_DATA, COLOR_PANEL); 
+            tft.setCursor(15, 65);
+            tft.printf("%.1f C  ", temp);
             lastTemp = temp;
         }
-        if (!dashboardCacheInit || fabsf(hum - lastHum) >= 0.2f) {
-            tft.fillRect(16, 108, 286, 24, ILI9341_BLACK);
-            tft.setCursor(16, 108);
-            tft.setTextColor(ILI9341_CYAN, ILI9341_BLACK);
-            tft.printf("VPD/Hum: %.1f %%", hum);
+        if (hum != lastHum || isnan(lastHum)) {
+            tft.setTextColor(COLOR_DATA, COLOR_PANEL);
+            tft.setCursor(15, 95);
+            tft.printf("%.1f %%  ", hum);
             lastHum = hum;
         }
-        if (!dashboardCacheInit || soil != lastSoil) {
-            tft.fillRect(16, 138, 286, 24, ILI9341_BLACK);
-            tft.setCursor(16, 138);
-            tft.setTextColor(ILI9341_MAGENTA, ILI9341_BLACK);
-            tft.printf("Suelo: %d %%", soil);
+
+        if (soil != lastSoil) {
+            tft.setTextColor(soil < 30 ? COLOR_WARN : COLOR_ACCENT, COLOR_PANEL);
+            tft.setCursor(170, 65);
+            tft.printf("H2O: %d%%  ", soil);
             lastSoil = soil;
         }
-        if (!dashboardCacheInit || relay != lastRelay) {
-            tft.fillRect(16, 172, 286, 24, ILI9341_BLACK);
-            tft.setCursor(16, 172);
+        if (relay != (lastRelay == 1)) {
+            tft.setTextSize(1);
+            tft.setCursor(170, 100);
             if (relay) {
-                tft.setTextColor(ILI9341_BLACK, ILI9341_GREEN);
-                tft.println(" BOMBA: REGANDO ");
+                tft.setTextColor(COLOR_BG, COLOR_ACCENT); 
+                tft.print(" BOMBA: REGANDO  ");
             } else {
-                tft.setTextColor(ILI9341_WHITE, ILI9341_RED);
-                tft.println(" BOMBA: REPOSO  ");
+                tft.setTextColor(COLOR_TEXT, COLOR_WARN); 
+                tft.print(" BOMBA: REPOSO   ");
             }
-            lastRelay = relay;
+            lastRelay = relay ? 1 : 0;
         }
-        dashboardCacheInit = true;
-    }
 
-    void updateNetworkStatus(bool wifiOk, bool mqttOk, String ip, int rssi) {
         tft.setTextSize(2);
-        if (!networkCacheInit) {
-            tft.setCursor(16, 76); tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK); tft.print("IP: "); 
-            tft.setTextColor(ILI9341_GREEN, ILI9341_BLACK); tft.println(ip);
-            
-            tft.setCursor(16, 112); tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK); tft.print("RSSI: ");
-            tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK); tft.printf("%d dBm", rssi);
-            
-            tft.setCursor(16, 150); tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK); tft.print("MQTT: ");
-            tft.setTextColor(mqttOk ? ILI9341_GREEN : ILI9341_RED, ILI9341_BLACK); 
-            tft.println(mqttOk ? "CONECTADO" : "DESCONECTADO");
+        if (wifiOk != (lastWifi == 1) || ip != lastIp || rssi != lastRssi) {
+            tft.setTextColor(COLOR_TEXT, COLOR_PANEL);
+            tft.setCursor(15, 165);
+            tft.print("Wi-Fi: ");
+            tft.setTextColor(wifiOk ? COLOR_ACCENT : COLOR_WARN, COLOR_PANEL);
+            tft.print(wifiOk ? "ONLINE      " : "OFFLINE     ");
+
+            tft.setTextColor(COLOR_TEXT, COLOR_PANEL);
+            tft.setTextSize(1);
+            tft.setCursor(15, 190);
+            tft.printf("IP: %-15s", ip.c_str());
+
+            tft.setCursor(15, 208);
+            tft.printf("Senal RSSI: %d dBm  ", rssi);
+
+            lastWifi = wifiOk ? 1 : 0;
+            lastIp = ip;
+            lastRssi = rssi;
         }
-        networkCacheInit = true;
+
+        if (mqttOk != (lastMqtt == 1)) {
+            tft.setTextSize(2);
+            tft.setTextColor(COLOR_TEXT, COLOR_PANEL);
+            tft.setCursor(160, 165);
+            tft.print("MQTT: ");
+            tft.setTextColor(mqttOk ? COLOR_ACCENT : COLOR_WARN, COLOR_PANEL);
+            tft.print(mqttOk ? "ONLINE " : "OFFLINE");
+            lastMqtt = mqttOk ? 1 : 0;
+        }
     }
 };
 #endif
