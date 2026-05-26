@@ -12,10 +12,10 @@
 
 // Datos de Conexión (Ajusta el Broker a la IP de tu Raspberry Pi Gateway)
 const char* WIFI_SSID = "AgroTech_IoT";
-const char* WIFI_PASS = "HAILKn0x64_Dv*";
+const char* WIFI_PASS = "Wifi_Pass";
 const char* MQTT_BROKER_IP = "192.168.1.113";
-const char* MQTT_USER = "mrknox";
-const char* MQTT_PASS = "HAILKn0x64";
+const char* MQTT_USER = "user";
+const char* MQTT_PASS = "pass";
 
 const int PIN_SOIL_ADC = 34; // Sensor Capacitivo v1.2
 const int PIN_RELAY = 27;    // Actuador Bomba DC
