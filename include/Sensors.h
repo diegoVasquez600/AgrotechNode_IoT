@@ -1,56 +1,73 @@
+/**
+ * @file Sensors.h
+ * @brief Gestión de Percepción y Edge Computing (Filtro Promedio Móvil k=5)
+ * @project AgroTech_Node: Sistema de Resiliencia Hídrica y Monitoreo Térmico (Fase PoC y MVP)
+ * @author Diego Alejandro Ríos Vásquez
+ * @instructor Mg. Bernardo Molina Zuluaga
+ * @course Optativa I: Internet de las Cosas
+ * @institution Institución Universitaria Pascual Bravo
+ * @date Mayo de 2026
+ */
+
 #ifndef SENSORS_H
 #define SENSORS_H
-#include <DHT.h>
+
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BME280.h>
 
 class SensorManager {
 private:
-    DHT dht;
-    int pinCLK, pinDT, pinSW, pinFlame, pinJoyY;
-    int lastCLK;
-    int soilValue = 50; // Empezamos en 50%
+    Adafruit_BME280 bme;
+    int pinSoilADC;
+    
+    // Valores de calibración del sensor capacitivo (Ajustar en campo)
+    const int VALOR_SECO = 3500;  // Lectura ADC cuando la tierra está seca
+    const int VALOR_AGUA = 1500;  // Lectura ADC cuando está sumergido
 
 public:
-    SensorManager(int dhtP, int clk, int dt, int sw, int flame, int jY) 
-        : dht(dhtP, DHT11), pinCLK(clk), pinDT(dt), pinSW(sw), pinFlame(flame), pinJoyY(jY) {}
+    SensorManager(int soilPin) : pinSoilADC(soilPin) {}
 
     void begin() {
-        dht.begin();
-        pinMode(pinCLK, INPUT);
-        pinMode(pinDT, INPUT);
-        pinMode(pinSW, INPUT_PULLUP);
-        pinMode(pinFlame, INPUT_PULLUP);
-        pinMode(pinJoyY, INPUT);
-        lastCLK = digitalRead(pinCLK);
-    }
-
-    float getT() { return dht.readTemperature(); }
-    float getH() { return dht.readHumidity(); }
-    
-    // Lógica para el Encoder (Humedad Suelo)
-    int getSoil() {
-        int currentCLK = digitalRead(pinCLK);
-        if (currentCLK != lastCLK && currentCLK == 1) {
-            // Si el CLK cambió, revisamos DT para saber dirección
-            if (digitalRead(pinDT) != currentCLK) {
-                soilValue += 5; // Gira derecha: Sube humedad
-            } else {
-                soilValue -= 5; // Gira izquierda: Baja humedad
-            }
-            // Limitar entre 0 y 100
-            if(soilValue > 100) soilValue = 100;
-            if(soilValue < 0) soilValue = 0;
+        // Inicializar I2C en los pines definidos en el esquemático (SDA=21, SCL=22)
+        Wire.begin(21, 22);
+        
+        if (!bme.begin(0x76, &Wire)) {
+            Serial.println("Error: No se encuentra el sensor BME280!");
         }
-        lastCLK = currentCLK;
-        return soilValue;
+        
+        pinMode(pinSoilADC, INPUT);
     }
 
-    bool isFire() { return digitalRead(pinFlame) == LOW; }
+    float getT() { 
+        return bme.readTemperature(); 
+    }
+    
+    float getH() { 
+        return bme.readHumidity(); 
+    }
 
-    int getMenuNav() {
-        int val = analogRead(pinJoyY);
-        if(val < 1000) return 0;
-        if(val > 3000) return 1;
-        return -1;
+    // Edge Computing: Implementación del Filtro de Promedio Móvil (k=5)
+    int getSoil() {
+        int lecturas[5];      // Ventana de muestreo k=5
+        int total = 0;
+        
+        for(int i=0; i<5; i++) {
+            lecturas[i] = analogRead(pinSoilADC); // Captura del dato crudo
+            total += lecturas[i];
+            delay(10);          // Estabilización entre muestras
+        }
+        
+        int promedio = total / 5; // Valor filtrado
+        
+        // Mapear la lectura analógica filtrada a un porcentaje (0% - 100%)
+        int porcentaje = map(promedio, VALOR_SECO, VALOR_AGUA, 0, 100);
+        
+        // Restringir los valores entre 0 y 100 por si hay picos extremos
+        if(porcentaje > 100) porcentaje = 100;
+        if(porcentaje < 0) porcentaje = 0;
+        
+        return porcentaje;
     }
 };
 #endif

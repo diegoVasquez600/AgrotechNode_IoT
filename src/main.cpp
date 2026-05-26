@@ -1,34 +1,49 @@
+/**
+ * @file main.cpp
+ * @brief Firmware Edge Computing - Núcleo de Control y Telemetría
+ * @project AgroTech_Node: Sistema de Resiliencia Hídrica y Monitoreo Térmico (Fase PoC y MVP)
+ * @author Diego Alejandro Ríos Vásquez
+ * @instructor Mg. Bernardo Molina Zuluaga
+ * @course Optativa I: Internet de las Cosas
+ * @institution Institución Universitaria Pascual Bravo
+ * @date Mayo de 2026
+ */
+
 #include <Arduino.h>
 #include "Sensors.h"
 #include "Display.h"
 #include "NetworkManager.h"
 
-// Datos de Conexión
+// Datos de Conexión (Ajusta el Broker a la IP de tu Raspberry Pi Gateway)
 const char* WIFI_SSID = "AgroTech_IoT";
 const char* WIFI_PASS = "HAILKn0x64_Dv*";
 const char* MQTT_BROKER_IP = "192.168.1.113";
 const char* MQTT_USER = "mrknox";
 const char* MQTT_PASS = "HAILKn0x64";
 
-// SensorManager(DHT, CLK, DT, SW_ENCODER, FLAME, JOY_Y)
-SensorManager sensors(26, 34, 35, 33, 27, 32);
+// Definición de Pines según el Esquemático Industrial
+const int PIN_SOIL_ADC = 34; // Sensor Capacitivo v1.2 (Señal Analógica)
+const int PIN_RELAY = 27;    // Actuador Bomba DC (Relé JQC-3F)
+const int UMBRAL_MARCHITEZ = 30; // Si baja del 30%, enciende la bomba
+
+SensorManager sensors(PIN_SOIL_ADC);
 DisplayManager ui;
 NetworkManager net(WIFI_SSID, WIFI_PASS, MQTT_BROKER_IP, MQTT_USER, MQTT_PASS);
 
 unsigned long tUpdate = 0;
-enum UiScreen { UI_DASHBOARD, UI_NETWORK };
-UiScreen currentScreen = UI_DASHBOARD;
-
-int lastNavState = -1;
-unsigned long tLastNav = 0;
-bool navArmed = false;
+unsigned long tScreenCycle = 0;
+bool showingDashboard = true;
 
 void setup() {
     Serial.begin(115200);
+    
+    // Configuración Lógica de Actuación (Fail-Safe)
+    pinMode(PIN_RELAY, OUTPUT);
+    digitalWrite(PIN_RELAY, LOW); // Normalmente Abierto (NO) apagado por defecto
+    
     sensors.begin();
     ui.begin();
     net.begin();
-    pinMode(25, OUTPUT); // Relé
     
     ui.showSplash();
     ui.drawDashboardFrame();
@@ -37,60 +52,34 @@ void setup() {
 void loop() {
     net.loop();
 
-    // Lógica de Navegación con Joystick
-    int nav = sensors.getMenuNav();
-    if (!navArmed) {
-        if (nav == -1) navArmed = true;
-    } else {
-        if (nav != -1 && lastNavState == -1 && (millis() - tLastNav) > 400) {
-            currentScreen = (currentScreen == UI_DASHBOARD) ? UI_NETWORK : UI_DASHBOARD;
-            if (currentScreen == UI_DASHBOARD) ui.drawDashboardFrame();
-            else ui.drawNetworkFrame();
-            tLastNav = millis();
-        }
-    }
-    lastNavState = nav;
-
-    // Seguridad: Fuego
-    if(sensors.isFire()) {
-        ui.showFireAlert();
-        digitalWrite(25, LOW);
-        while(sensors.isFire());
-        ui.begin(); 
-        if (currentScreen == UI_DASHBOARD) ui.drawDashboardFrame();
+    // 1. Alternancia automática de la interfaz HMI (cada 8 segundos)
+    if (millis() - tScreenCycle > 8000) {
+        showingDashboard = !showingDashboard;
+        if (showingDashboard) ui.drawDashboardFrame();
         else ui.drawNetworkFrame();
+        tScreenCycle = millis();
     }
 
-    // Control de Riego
+    // 2. Edge Computing: Adquisición de Smart Data
     float temp = sensors.getT();
     float hum = sensors.getH();
-    int soil = sensors.getSoil();
-    bool valve = (soil < 30);
-    digitalWrite(25, valve ? HIGH : LOW);
+    int soil_percent = sensors.getSoil(); // Ya viene con Filtro de Promedio Móvil
+    
+    // 3. Lógica de Control (Histéresis básica y actuación)
+    bool valveStatus = (soil_percent < UMBRAL_MARCHITEZ);
+    digitalWrite(PIN_RELAY, valveStatus ? HIGH : LOW);
 
-    String wifiIp = net.getWifiIp();
-    String wifiSsid = net.getWifiSsid();
-    int wifiRssi = net.getWifiRssi();
-    String wifiQual = net.getWifiQualityText();
-
-    // Actualización de Pantalla y Envío IoT
-    if(millis() - tUpdate > 900) {
-        String wStat = net.isWifiOk() ? "W:OK" : "W:ERR";
-        String mStat = net.isMqttOk() ? "M:OK" : "M:ERR";
-
-        if (currentScreen == UI_DASHBOARD) {
-            ui.updateData(temp, hum, soil, valve, wStat, mStat);
+    // 4. Actualización de Interfaz y Telemetría
+    if(millis() - tUpdate > 1000) {
+        if (showingDashboard) {
+            ui.updateData(temp, hum, soil_percent, valveStatus);
         } else {
-            ui.updateNetworkStatus(
-                net.isWifiOk(), net.isMqttOk(), wifiSsid,
-                wifiIp, wifiRssi, wifiQual,
-                net.getMqttHost(), net.getMqttPort(), net.getMqttStateText()
-            );
+            ui.updateNetworkStatus(net.isWifiOk(), net.isMqttOk(), net.getWifiIp(), net.getWifiRssi());
         }
         
         static int sendCount = 0;
-        if(++sendCount >= 6) { // Cada ~5.4 segundos
-            net.sendJson(temp, hum, soil, valve, wifiIp, wifiSsid, wifiRssi, wifiQual);
+        if(++sendCount >= 5) { // Publicar en MQTT cada 5 segundos
+            net.sendJson(temp, hum, soil_percent, valveStatus, net.getWifiIp(), net.getWifiSsid(), net.getWifiRssi(), net.getWifiQualityText());
             sendCount = 0;
         }
         tUpdate = millis();
